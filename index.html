@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cold Email Writer</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        .container {
+            background-color: #1e293b;
+            padding: 2rem;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            max-width: 600px;
+            width: 100%;
+            text-align: center;
+        }
+        h1, h2 {
+            margin-top: 0;
+        }
+        button {
+            background-color: #6366f1;
+            color: #ffffff;
+            border: none;
+            padding: 0.8rem 2rem;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #4f46e5;
+        }
+        input[type="email"] {
+            width: calc(100% - 22px);
+            padding: 0.8rem;
+            margin-top: 1rem;
+            border: 1px solid #6366f1;
+            border-radius: 8px;
+            background-color: #0f172a;
+            color: #ffffff;
+        }
+        .form-group {
+            text-align: left;
+            margin-bottom: 1rem;
+        }
+        .email-output {
+            background-color: #0f172a;
+            border: 1px solid #6366f1;
+            padding: 1rem;
+            margin-top: 2rem;
+            border-radius: 8px;
+            white-space: pre-wrap;
+        }
+        .viral-attribution {
+            font-size: 0.9rem;
+            margin-top: 1rem;
+            color: #9ca3af;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script type="text/babel">
+        const CONFIG = {
+            GROQ_KEY: 'CONFIG.GROQ_KEY',
+            SUPABASE_ANON_KEY: 'your-supabase-anon-key',
+            SUPABASE_URL: 'https://your-supabase-url.supabase.co'
+        };
+
+        const posthog = {
+            capture: (event, properties) => {
+                console.log('PostHog event:', event, properties);
+            }
+        };
+
+        const supabase = {
+            from: (table) => ({
+                insert: (data) => {
+                    console.log('Supabase insert:', table, data);
+                    return { data, error: null };
+                }
+            })
+        };
+
+        const API_URL = 'https://api.groq.com/v1/infer';
+
+        class ColdEmailWriter extends React.Component {
+            constructor(props) {
+                super(props);
+                this.state = {
+                    view: 'landing',
+                    recipientData: '',
+                    emailDraft: '',
+                    freeUses: 0,
+                    email: ''
+                };
+            }
+
+            handleInputChange = (e) => {
+                this.setState({ recipientData: e.target.value });
+            };
+
+            generateEmailDraft = async () => {
+                const { recipientData, freeUses } = this.state;
+                posthog.capture('tool_used', { freeUses });
+
+                if (freeUses >= 2) {
+                    this.setState({ view: 'paywall' });
+                    posthog.capture('free_limit_hit');
+                    return;
+                }
+
+                try {
+                    const response = await fetch(API_URL, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${CONFIG.GROQ_KEY}`
+                        },
+                        body: JSON.stringify({
+                            model: 'llama3-70b',
+                            prompt: `Write a cold email to: ${recipientData}. Be concise and persuasive.`,
+                            max_tokens: 150
+                        })
+                    });
+                    const data = await response.json();
+                    this.setState({ emailDraft: data.completions[0].text.trim(), freeUses: freeUses + 1 });
+                } catch (error) {
+                    console.error('Error generating email draft:', error);
+                }
+            };
+
+            handleEmailSubmit = () => {
+                const { email } = this.state;
+                supabase.from('leads').insert({ email });
+                this.setState({ email: '', freeUses: 2 });
+                posthog.capture('email_captured');
+            };
+
+            render() {
+                const { view, recipientData, emailDraft, email } = this.state;
+
+                return (
+                    <div className="container">
+                        {view === 'landing' && (
+                            <div>
+                                <h1>Cold Emails Stalled</h1>
+                                <h2>Sales teams craft effective emails in minutes</h2>
+                                <p>Enter recipient data (5 sec) → AI assists writing (10 sec) → Get instant email draft</p>
+                                <button onClick={() => { this.setState({ view: 'tool' }); posthog.capture('tool_opened'); }}>Write Smarter</button>
+                            </div>
+                        )}
+                        {view === 'tool' && (
+                            <div>
+                                <h1>Write your Cold Email</h1>
+                                <div className="form-group">
+                                    <label htmlFor="recipientData">Recipient Data:</label>
+                                    <textarea id="recipientData" value={recipientData} onChange={this.handleInputChange} rows="4"></textarea>
+                                </div>
+                                <button onClick={this.generateEmailDraft}>Generate Draft</button>
+                                {emailDraft && (
+                                    <div>
+                                        <h2>Email Draft</h2>
+                                        <div className="email-output">
+                                            {emailDraft}
+                                            <div className="viral-attribution">Generated by Cold Email Writer — cold-email-writer-tool.vercel.app</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                        {view === 'paywall' && (
+                            <div>
+                                <h1>Upgrade to Continue</h1>
+                                <p>Try 3 more emails for free by entering your email address:</p>
+                                <div className="form-group">
+                                    <label htmlFor="email">Email:</label>
+                                    <input type="email" id="email" value={email} onChange={(e) => this.setState({ email: e.target.value })} />
+                                </div>
+                                <button onClick={this.handleEmailSubmit}>Get More Uses</button>
+                                <p>Or <a href="#" onClick={(e) => { e.preventDefault(); posthog.capture('payment_clicked'); }}>upgrade to $9/mo</a></p>
+                            </div>
+                        )}
+                    </div>
+                );
+            }
+        }
+
+        ReactDOM.render(<ColdEmailWriter />, document.getElementById('root'));
+    </script>
+</body>
+</html>
