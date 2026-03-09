@@ -28,181 +28,188 @@
             text-align: center;
         }
         h1, h2 {
-            margin-top: 0;
+            color: #ffffff;
+        }
+        input, textarea, button {
+            width: 100%;
+            padding: 0.75rem;
+            margin: 0.5rem 0;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
         }
         button {
             background-color: #6366f1;
             color: #ffffff;
-            border: none;
-            padding: 0.8rem 2rem;
-            border-radius: 8px;
             cursor: pointer;
-            font-size: 1rem;
-            transition: background-color 0.3s;
+            transition: background-color 0.3s ease;
         }
         button:hover {
-            background-color: #4f46e5;
+            background-color: #5550bd;
         }
-        input[type="email"] {
-            width: calc(100% - 22px);
-            padding: 0.8rem;
-            margin-top: 1rem;
-            border: 1px solid #6366f1;
-            border-radius: 8px;
-            background-color: #0f172a;
-            color: #ffffff;
+        .paywall button {
+            background-color: #6366f1;
         }
-        .form-group {
-            text-align: left;
+        .paywall .email-input {
             margin-bottom: 1rem;
-        }
-        .email-output {
-            background-color: #0f172a;
-            border: 1px solid #6366f1;
-            padding: 1rem;
-            margin-top: 2rem;
-            border-radius: 8px;
-            white-space: pre-wrap;
         }
         .viral-attribution {
             font-size: 0.9rem;
+            color: #848484;
             margin-top: 1rem;
-            color: #9ca3af;
+        }
+        .how-it-works {
+            margin-top: 2rem;
+            line-height: 1.6;
+        }
+        .paywall .how-it-works {
+            display: none;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.5rem;
+            }
         }
     </style>
 </head>
 <body>
-    <div id="root"></div>
-    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
-    <script type="text/babel">
-        const CONFIG = {
-            GROQ_KEY: 'CONFIG.GROQ_KEY',
-            SUPABASE_ANON_KEY: 'your-supabase-anon-key',
-            SUPABASE_URL: 'https://your-supabase-url.supabase.co'
+<div id="root"></div>
+<script>
+    const CONFIG = {
+        GROQ_KEY: "CONFIG.GROQ_KEY",
+        SUPABASE_ANON_KEY: "your-supabase-anon-key",
+        SUPABASE_URL: "https://your-supabase-url.supabase.co"
+    };
+
+    const { createRoot } = ReactDOM;
+    const { useState, useEffect } = React;
+
+    const posthog = window.posthog || [];
+    posthog.init('your-posthog-key', { api_host: 'https://app.posthog.com' });
+
+    function App() {
+        const [view, setView] = useState('landing');
+        const [recipientData, setRecipientData] = useState('');
+        const [email, setEmail] = useState('');
+        const [uses, setUses] = useState(0);
+        const [emailForPaywall, setEmailForPaywall] = useState('');
+
+        useEffect(() => {
+            if (uses >= 2) {
+                setView('paywall');
+            }
+        }, [uses]);
+
+        const handleToolOpen = () => {
+            posthog.capture('tool_opened');
+            setView('tool');
         };
 
-        const posthog = {
-            capture: (event, properties) => {
-                console.log('PostHog event:', event, properties);
+        const handleToolUse = async () => {
+            if (uses < 2) {
+                posthog.capture('tool_used');
+                setUses(prev => prev + 1);
+                const response = await fetch('https://api.groq.com/v1/predict', {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${CONFIG.GROQ_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: 'llama3-70b',
+                        prompt: recipientData
+                    })
+                });
+                const data = await response.json();
+                setEmail(data.choices[0].text);
+            } else {
+                posthog.capture('free_limit_hit');
+                setView('paywall');
             }
         };
 
-        const supabase = {
-            from: (table) => ({
-                insert: (data) => {
-                    console.log('Supabase insert:', table, data);
-                    return { data, error: null };
-                }
-            })
+        const handlePaywallShow = () => {
+            posthog.capture('paywall_shown');
         };
 
-        const API_URL = 'https://api.groq.com/v1/infer';
+        const handlePaymentClick = () => {
+            posthog.capture('payment_clicked');
+            window.location.href = 'https://buy.stripe.com/placeholder-cold-email-writer-tool';
+        };
 
-        class ColdEmailWriter extends React.Component {
-            constructor(props) {
-                super(props);
-                this.state = {
-                    view: 'landing',
-                    recipientData: '',
-                    emailDraft: '',
-                    freeUses: 0,
-                    email: ''
-                };
-            }
+        const handleEmailCapture = async (e) => {
+            e.preventDefault();
+            posthog.capture('email_captured');
+            const supabase = new SupabaseClient(CONFIG.SUPABASE_URL, CONFIG.SUPABASE_ANON_KEY);
+            await supabase.from('leads').insert([{ email: emailForPaywall }]);
+            setUses(uses + 3);
+            setView('tool');
+            setEmailForPaywall('');
+        };
 
-            handleInputChange = (e) => {
-                this.setState({ recipientData: e.target.value });
-            };
-
-            generateEmailDraft = async () => {
-                const { recipientData, freeUses } = this.state;
-                posthog.capture('tool_used', { freeUses });
-
-                if (freeUses >= 2) {
-                    this.setState({ view: 'paywall' });
-                    posthog.capture('free_limit_hit');
-                    return;
-                }
-
-                try {
-                    const response = await fetch(API_URL, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Authorization': `Bearer ${CONFIG.GROQ_KEY}`
-                        },
-                        body: JSON.stringify({
-                            model: 'llama3-70b',
-                            prompt: `Write a cold email to: ${recipientData}. Be concise and persuasive.`,
-                            max_tokens: 150
-                        })
-                    });
-                    const data = await response.json();
-                    this.setState({ emailDraft: data.completions[0].text.trim(), freeUses: freeUses + 1 });
-                } catch (error) {
-                    console.error('Error generating email draft:', error);
-                }
-            };
-
-            handleEmailSubmit = () => {
-                const { email } = this.state;
-                supabase.from('leads').insert({ email });
-                this.setState({ email: '', freeUses: 2 });
-                posthog.capture('email_captured');
-            };
-
-            render() {
-                const { view, recipientData, emailDraft, email } = this.state;
-
-                return (
-                    <div className="container">
-                        {view === 'landing' && (
-                            <div>
-                                <h1>Cold Emails Stalled</h1>
-                                <h2>Sales teams craft effective emails in minutes</h2>
-                                <p>Enter recipient data (5 sec) → AI assists writing (10 sec) → Get instant email draft</p>
-                                <button onClick={() => { this.setState({ view: 'tool' }); posthog.capture('tool_opened'); }}>Write Smarter</button>
-                            </div>
+        return (
+            <div className="container">
+                {view === 'landing' && (
+                    <>
+                        <h1>Cold Emails Stalled</h1>
+                        <h2>Sales teams craft winning emails in minutes</h2>
+                        <div className="how-it-works">
+                            <p>Enter recipient data (5 sec) → AI suggests email (10 sec) → Get instant responses (instant)</p>
+                        </div>
+                        <button onClick={handleToolOpen}>Write Winning Emails</button>
+                    </>
+                )}
+                {view === 'tool' && (
+                    <>
+                        <h2>Enter Recipient Data</h2>
+                        <textarea
+                            value={recipientData}
+                            onChange={(e) => setRecipientData(e.target.value)}
+                            placeholder="Enter recipient details here..."
+                        />
+                        <button onClick={handleToolUse}>Get Email Suggestion</button>
+                        {email && (
+                            <>
+                                <h2>Suggested Email</h2>
+                                <textarea
+                                    value={email}
+                                    readOnly
+                                />
+                                <p className="viral-attribution">Generated by Cold Email Writer — cold-email-writer-tool.vercel.app</p>
+                            </>
                         )}
-                        {view === 'tool' && (
-                            <div>
-                                <h1>Write your Cold Email</h1>
-                                <div className="form-group">
-                                    <label htmlFor="recipientData">Recipient Data:</label>
-                                    <textarea id="recipientData" value={recipientData} onChange={this.handleInputChange} rows="4"></textarea>
-                                </div>
-                                <button onClick={this.generateEmailDraft}>Generate Draft</button>
-                                {emailDraft && (
-                                    <div>
-                                        <h2>Email Draft</h2>
-                                        <div className="email-output">
-                                            {emailDraft}
-                                            <div className="viral-attribution">Generated by Cold Email Writer — cold-email-writer-tool.vercel.app</div>
-                                        </div>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {view === 'paywall' && (
-                            <div>
-                                <h1>Upgrade to Continue</h1>
-                                <p>Try 3 more emails for free by entering your email address:</p>
-                                <div className="form-group">
-                                    <label htmlFor="email">Email:</label>
-                                    <input type="email" id="email" value={email} onChange={(e) => this.setState({ email: e.target.value })} />
-                                </div>
-                                <button onClick={this.handleEmailSubmit}>Get More Uses</button>
-                                <p>Or <a href="#" onClick={(e) => { e.preventDefault(); posthog.capture('payment_clicked'); }}>upgrade to $9/mo</a></p>
-                            </div>
-                        )}
-                    </div>
-                );
-            }
-        }
+                    </>
+                )}
+                {view === 'paywall' && (
+                    <>
+                        <h1>Cold Emails Stalled</h1>
+                        <h2>Sales teams craft winning emails in minutes</h2>
+                        <p>Upgrade to get more uses and features!</p>
+                        <button onClick={handlePaymentClick}>Upgrade Now ($9/mo)</button>
+                        <h3>Or, enter your email for 3 free uses</h3>
+                        <form onSubmit={handleEmailCapture}>
+                            <input
+                                type="email"
+                                value={emailForPaywall}
+                                onChange={(e) => setEmailForPaywall(e.target.value)}
+                                placeholder="Enter your email..."
+                                className="email-input"
+                            />
+                            <button type="submit">Get 3 Free Uses</button>
+                        </form>
+                    </>
+                )}
+            </div>
+        );
+    }
 
-        ReactDOM.render(<ColdEmailWriter />, document.getElementById('root'));
-    </script>
+    const root = createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.0.0/dist/supabase.min.js"></script>
+<script src="https://js.posthog.com/posthog.min.js"></script>
 </body>
 </html>
